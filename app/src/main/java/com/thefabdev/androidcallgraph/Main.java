@@ -3,12 +3,58 @@
  */
 package com.thefabdev.androidcallgraph;
 
+import java.io.File;
+import java.io.IOException;
+import java.net.URISyntaxException;
+
+import org.xmlpull.v1.XmlPullParserException;
+
+import soot.Scene;
+import soot.jimple.infoflow.InfoflowConfiguration;
+import soot.jimple.infoflow.android.InfoflowAndroidConfiguration;
+import soot.jimple.infoflow.android.SetupApplication;
+import soot.jimple.infoflow.methodSummary.data.provider.EagerSummaryProvider;
+import soot.jimple.infoflow.methodSummary.data.provider.LazySummaryProvider;
+import soot.jimple.infoflow.methodSummary.taintWrappers.SummaryTaintWrapper;
+import soot.jimple.infoflow.results.InfoflowResults;
+import soot.jimple.toolkits.callgraph.CallGraph;
+
 public class Main {
-    public String getGreeting() {
-        return "Hello World!";
-    }
+    private final static String USER_HOME = System.getProperty("user.home");
+    private static String androidJar = USER_HOME + "/Library/Android/sdk/platforms";
+    static String apkPath;
 
     public static void main(String[] args) {
-        System.out.println(new Main().getGreeting());
+        // Get env args
+        if (args.length == 0){
+            System.err.println("Error: you must provide path to the apk!");
+            return;
+        }
+
+        apkPath = args[0];
+        InfoflowConfiguration.CallgraphAlgorithm cgAlgorithm = InfoflowConfiguration.CallgraphAlgorithm.CHA;
+        boolean drawGraph = false;
+
+        if (args.length > 1 && args[1].equals("SPARK")) {
+            cgAlgorithm = InfoflowConfiguration.CallgraphAlgorithm.SPARK;
+        }
+   
+        if (args.length > 2 && args[2].equals("draw")) {
+            drawGraph = true;
+        }
+
+        if(System.getenv().containsKey("ANDROID_HOME")) {
+            androidJar = System.getenv("ANDROID_HOME")+ File.separator + "platforms";
+        }
+
+        // Setup FlowDroid
+        final InfoflowAndroidConfiguration config = Utils.getFlowDroidConfig(apkPath, androidJar, cgAlgorithm);
+        SetupApplication app = new SetupApplication(config);
+
+        // Construct the call graph
+        app.constructCallgraph();
+        CallGraph callGraph = Scene.v().getCallGraph();
+
+        System.out.println(callGraph);
     }
 }

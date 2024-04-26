@@ -29,6 +29,11 @@ dependencies {
 
     // Soot
     implementation "org.soot-oss:soot:${SOOT_VERSION}"
+
+    // Flowdroid
+    implementation group:'de.fraunhofer.sit.sse.flowdroid', name:'soot-infoflow', version:INFOFLOW_VERSION
+    implementation group:'de.fraunhofer.sit.sse.flowdroid', name:'soot-infoflow-summaries', version:INFOFLOW_VERSION
+    implementation group:'de.fraunhofer.sit.sse.flowdroid', name:'soot-infoflow-android', version:INFOFLOW_VERSION
 }
 
 // Apply a specific Java toolchain to ease working on different environments.

@@ -7,9 +7,11 @@
 
 ## Setup
 
+```
 $ git clone https://github.com/Fakorede/android-apk-callgraph.git
 $ cd android-apk-callgraph
 $ ./gradlew build
+```
 
 Finally, run command:
 ```

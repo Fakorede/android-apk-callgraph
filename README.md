@@ -13,7 +13,13 @@ $ cd android-apk-callgraph
 $ ./gradlew build
 ```
 
-Finally, run command:
+Finally, install dependencies:
 ```
-$ ./gradlew run --args /path/to/apk
+$ ./gradlew build
+```
+
+## Run
+
+```
+$ java -cp /path/to/android-apk-callgraph/app/build/libs/android-apk-callgraph-all.jar com.thefabdev.androidcallgraph.Main -p $ANDROID_HOME/platforms -a /path/to/apk
 ```

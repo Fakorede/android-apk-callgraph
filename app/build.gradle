@@ -12,6 +12,9 @@ plugins {
     
     // Add support for Java
     id 'java'
+
+    // Shadow Jar
+    id 'com.github.johnrengelman.shadow' version '6.0.0'
 }
 
 repositories {
@@ -27,6 +30,9 @@ dependencies {
     // This dependency is used by the application.
     implementation 'com.google.guava:guava:29.0-jre'
 
+    compileOnly group:'org.apache.commons', name:'commons-lang3', version:commons_lang3_version
+    compileOnly group:'commons-cli', name:'commons-cli', version:commons_cli_version
+
     // Soot
     implementation "org.soot-oss:soot:${SOOT_VERSION}"
 
@@ -34,6 +40,26 @@ dependencies {
     implementation group:'de.fraunhofer.sit.sse.flowdroid', name:'soot-infoflow', version:INFOFLOW_VERSION
     implementation group:'de.fraunhofer.sit.sse.flowdroid', name:'soot-infoflow-summaries', version:INFOFLOW_VERSION
     implementation group:'de.fraunhofer.sit.sse.flowdroid', name:'soot-infoflow-android', version:INFOFLOW_VERSION
+}
+
+shadowJar {
+    // Optionally, customize the name of the shadow JAR
+    archiveBaseName.set('android-apk-callgraph')
+    
+    // Optionally, exclude any files or resources you don't want to include
+    exclude 'META-INF/*.DSA', 'META-INF/*.SF', 'META-INF/*.RSA'
+    
+    // Optionally, you can relocate classes to avoid conflicts
+    // Example:
+    // relocate 'com.google', 'myapp.com.google'
+    
+    // Optionally, you can merge service files
+    // Example:
+    // mergeServiceFiles()
+    
+    // Optionally, you can merge resource files
+    // Example:
+    // mergeResource()
 }
 
 // Apply a specific Java toolchain to ease working on different environments.
@@ -47,3 +73,6 @@ application {
     // Define the main class for the application.
     mainClass = 'com.thefabdev.androidcallgraph.Main'
 }
+
+// Specify the main class name for your application
+mainClassName = 'com.thefabdev.androidcallgraph.Main'

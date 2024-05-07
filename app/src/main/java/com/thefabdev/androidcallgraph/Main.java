@@ -6,55 +6,329 @@ package com.thefabdev.androidcallgraph;
 import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
 
+import org.apache.commons.cli.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.xmlpull.v1.XmlPullParserException;
 
+import com.thefabdev.androidcallgraph.visual.AndroidCallGraphFilter;
+
 import soot.Scene;
+import soot.SootClass;
+import soot.SootMethod;
+import soot.Unit;
 import soot.jimple.infoflow.InfoflowConfiguration;
+import soot.jimple.infoflow.InfoflowConfiguration.CallgraphAlgorithm;
+import soot.jimple.infoflow.InfoflowConfiguration.PathReconstructionMode;
+import soot.jimple.infoflow.InfoflowConfiguration.StaticFieldTrackingMode;
 import soot.jimple.infoflow.android.InfoflowAndroidConfiguration;
 import soot.jimple.infoflow.android.SetupApplication;
+import soot.jimple.infoflow.android.config.XMLConfigurationParser;
 import soot.jimple.infoflow.methodSummary.data.provider.EagerSummaryProvider;
 import soot.jimple.infoflow.methodSummary.data.provider.LazySummaryProvider;
 import soot.jimple.infoflow.methodSummary.taintWrappers.SummaryTaintWrapper;
 import soot.jimple.infoflow.results.InfoflowResults;
+import soot.jimple.infoflow.solver.cfg.InfoflowCFG;
 import soot.jimple.toolkits.callgraph.CallGraph;
+import soot.jimple.toolkits.callgraph.Edge;
+import soot.toolkits.graph.DirectedGraph;
 
 public class Main {
     private final static String USER_HOME = System.getProperty("user.home");
     private static String androidJar = USER_HOME + "/Library/Android/sdk/platforms";
     static String apkPath;
 
-    public static void main(String[] args) {
-        // Get env args
-        if (args.length == 0){
-            System.err.println("Error: you must provide path to the apk!");
+    private Set<String> filesToSkip = new HashSet<>();
+
+    private final Logger logger = LoggerFactory.getLogger(getClass());
+
+    private final static Options options = new Options();
+
+    // Files
+    private static final String OPTION_CONFIG_FILE = "c";
+    private static final String OPTION_APK_FILE = "a";
+    private static final String OPTION_PLATFORMS_DIR = "p";
+    private static final String OPTION_SOURCES_SINKS_FILE = "s";
+    private static final String OPTION_OUTPUT_FILE = "o";
+    private static final String OPTION_ADDITIONAL_CLASSPATH = "ac";
+    private static final String OPTION_SKIP_APK_FILE = "si";
+
+    // Modes and algorithms
+    private static final String OPTION_CALLGRAPH_ALGO = "cg";
+
+
+    /**
+     * Initializes the set of available command-line options
+     */
+    private static void initializeCommandLineOptions() {
+        options.addOption("?", "help", false, "Print this help message");
+
+        // Files
+        options.addOption(OPTION_CONFIG_FILE, "configfile", true, "Use the given configuration file");
+        options.addOption(OPTION_APK_FILE, "apkfile", true, "APK file to analyze");
+        options.addOption(OPTION_PLATFORMS_DIR, "platformsdir", true,
+                "Path to the platforms directory from the Android SDK");
+        options.addOption(OPTION_SOURCES_SINKS_FILE, "sourcessinksfile", true, "Definition file for sources and sinks");
+        options.addOption(OPTION_OUTPUT_FILE, "outputfile", true, "Output XML file for the discovered data flows");
+        options.addOption(OPTION_ADDITIONAL_CLASSPATH, "additionalclasspath", true,
+                "Additional JAR file that shal be put on the classpath");
+        options.addOption(OPTION_SKIP_APK_FILE, "skipapkfile", true,
+                "APK file to skip when processing a directory of input files");
+
+        // Modes and algorithms
+        options.addOption(OPTION_CALLGRAPH_ALGO, "cgalgo", true,
+        "Callgraph algorithm to use (AUTO, CHA, VTA, RTA, SPARK, GEOM)");
+    }
+
+    private Main() {
+        initializeCommandLineOptions();
+    }
+
+
+    private void run(String[] args) {
+        // We need proper parameters
+        final HelpFormatter formatter = new HelpFormatter();
+        if (args.length == 0) {
+            formatter.printHelp("soot-infoflow-cmd [OPTIONS]", options);
             return;
         }
+ 
+        // Parse the command-line parameters
+        CommandLineParser parser = new DefaultParser();
+        try {
+            CommandLine cmd = parser.parse(options, args);
+            // Do we need to display the user manual?
+            if (cmd.hasOption("?") || cmd.hasOption("help")) {
+                formatter.printHelp("soot-infoflow-cmd [OPTIONS]", options);
+                return;
+            }
 
-        apkPath = args[0];
-        InfoflowConfiguration.CallgraphAlgorithm cgAlgorithm = InfoflowConfiguration.CallgraphAlgorithm.CHA;
-        boolean drawGraph = false;
+            // Do we have a configuration file?
+            String configFile = cmd.getOptionValue(OPTION_CONFIG_FILE);
 
-        if (args.length > 1 && args[1].equals("SPARK")) {
-            cgAlgorithm = InfoflowConfiguration.CallgraphAlgorithm.SPARK;
+            final InfoflowAndroidConfiguration config = configFile == null || configFile.isEmpty()
+                ? new InfoflowAndroidConfiguration()
+                : loadConfigurationFile(configFile);
+            if (config == null)
+                return;
+
+            apkPath = cmd.getOptionValue(OPTION_APK_FILE);
+            String androidDir = cmd.getOptionValue(OPTION_PLATFORMS_DIR);
+            if (androidDir.isEmpty() || androidDir == null) {
+                androidJar = androidDir;
+            } else {
+                if(System.getenv().containsKey("ANDROID_HOME")) {
+                    androidJar = System.getenv("ANDROID_HOME")+ File.separator + "platforms";
+                }
+            }
+
+            InfoflowConfiguration.CallgraphAlgorithm cgAlgorithm = InfoflowConfiguration.CallgraphAlgorithm.CHA;
+            
+            // TODO: fix this
+            // if (args.length > 1 && args[1].equals("SPARK")) {
+            //     cgAlgorithm = InfoflowConfiguration.CallgraphAlgorithm.SPARK;
+            // }
+            
+            // Parse the other options
+            parseCommandLineOptions(cmd, config, filesToSkip, cgAlgorithm);
+
+            // Setup FlowDroid
+            SetupApplication app = new SetupApplication(config);
+
+            app.constructCallgraph();
+            // CallGraph callGraph = Scene.v().getCallGraph();
+            // System.out.println(callGraph);
+            // System.out.println();
+
+            System.out.println("Generate ICFG for our analysis...");
+            System.out.println();
+
+            InfoflowCFG icfg = new InfoflowCFG();
+
+            int classIndex = 0;
+
+            AndroidCallGraphFilter androidCallGraphFilter = new AndroidCallGraphFilter(Utils.getPackageName(apkPath));
+            for(SootClass sootClass: androidCallGraphFilter.getValidClasses()){
+                System.out.println(String.format("*****Class %d: %s*****", ++classIndex, sootClass.getName()));
+                if (sootClass.getMethods().isEmpty()) {
+                    System.out.println("No methods detected by soot.");
+                    return;
+                } else {
+                    System.out.println("These are the class methods detected by Soot");
+                    System.out.println(sootClass.getMethods());
+                    System.out.println();
+                }
+                // for(SootMethod sootMethod : sootClass.getMethods()){
+                //     int incomingEdge = 0;
+                //     for(Iterator<Edge> it = callGraph.edgesInto(sootMethod); it.hasNext();incomingEdge++,it.next());
+                //     int outgoingEdge = 0;
+                //     for(Iterator<Edge> it = callGraph.edgesOutOf(sootMethod); it.hasNext();outgoingEdge++,it.next());
+                //     System.out.println(String.format("\tMethod %s, #IncomeEdges: %d, #OutgoingEdges: %d", sootMethod.getName(), incomingEdge, outgoingEdge));
+                // }
+
+
+                
+                for(SootMethod sootMethod : sootClass.getMethods()) {
+                    System.out.println("\nsootMethod: " + sootMethod + "\n");
+                    
+                    DirectedGraph<Unit> dg = icfg.getOrCreateUnitGraph(sootMethod);
+                    System.out.println("Directed Graph:");
+                    System.out.println(dg);
+                }
+
+                System.out.println();
+            }
+
+        } catch(Exception ex) {
+
         }
-   
-        if (args.length > 2 && args[2].equals("draw")) {
-            drawGraph = true;
+
+    }
+
+    public static void main(String[] args) {
+        Main main = new Main();
+        main.run(args);
+    }
+
+
+    // private void constructCallgraph(SetupApplication app) {
+    //     try {
+    //         app.runInfoflow(); // constructCallgraph
+
+    //         // Iterate over the callgraph
+    //         for (Iterator<Edge> edgeIt = Scene.v().getCallGraph().iterator(); edgeIt.hasNext(); ) {
+    //             Edge edge = edgeIt.next();
+                
+    //             SootMethod smSrc = edge.src();
+    //             Unit uSrc = edge.srcStmt();
+    //             SootMethod smDest = edge.tgt();
+                
+    //             System.out.println("Edge FROM " + uSrc + " IN " + smSrc + " TO " + smDest);
+    //             System.out.println("-----------");
+    //         }
+
+
+    //         // InfoflowCFG icfg = new InfoflowCFG();
+    //         // DirectedGraph<Unit> ug = icfg.getOrCreateUnitGraph(targetMethod);
+    //         // Iterator<Unit> uit = ug.iterator();
+    //         // while (uit.hasNext()) {
+    //         //     Unit u = uit.next();
+    //         //     if (u.branches()) {
+    //         //         System.out.println(u);
+    //         //         List<Unit> list = icfg.getSuccsOf(u);
+    //         //         System.out.println(list);
+    //         //     }else if(icfg.isCallStmt(u)) {
+
+    //         //     }else if(icfg.isReturnSite(u)) {
+
+    //         //     }
+    //         // }
+    //     } catch (Exception e) {
+    //         // handle exception
+    //     }
+    // }
+
+    /**
+     * Loads the data flow configuration from the given file
+     *
+     * @param configFile The configuration file from which to load the data flow
+     *                   configuration
+     * @return The loaded data flow configuration
+     */
+    private InfoflowAndroidConfiguration loadConfigurationFile(String configFile) {
+        try {
+            InfoflowAndroidConfiguration config = new InfoflowAndroidConfiguration();
+            XMLConfigurationParser.fromFile(configFile).parse(config);
+            return config;
+        } catch (IOException e) {
+            System.err.println("Could not parse configuration file: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Parses the given command-line options and fills the given configuration
+     * object accordingly
+     *
+     * @param cmd    The command line to parse
+     * @param config The configuration object to fill
+     */
+    private static void parseCommandLineOptions(CommandLine cmd, InfoflowAndroidConfiguration config, Set<String> filesToSkip, InfoflowConfiguration.CallgraphAlgorithm cgAlgorithm) {
+        // Files
+        {
+            String apkFile = cmd.getOptionValue(OPTION_APK_FILE);
+            if (apkFile != null && !apkFile.isEmpty())
+                config.getAnalysisFileConfig().setTargetAPKFile(apkFile);
+        }
+        {
+            String platformsDir = cmd.getOptionValue(OPTION_PLATFORMS_DIR);
+            if (platformsDir != null && !platformsDir.isEmpty())
+                config.getAnalysisFileConfig().setAndroidPlatformDir(platformsDir);
+        }
+        {
+            String sourcesSinks = cmd.getOptionValue(OPTION_SOURCES_SINKS_FILE);
+            if (sourcesSinks != null && !sourcesSinks.isEmpty())
+                config.getAnalysisFileConfig().setSourceSinkFile(sourcesSinks);
+        }
+        {
+            String outputFile = cmd.getOptionValue(OPTION_OUTPUT_FILE);
+            if (outputFile != null && !outputFile.isEmpty())
+                config.getAnalysisFileConfig().setOutputFile(outputFile);
+        }
+        {
+            String additionalClasspath = cmd.getOptionValue(OPTION_ADDITIONAL_CLASSPATH);
+            if (additionalClasspath != null && !additionalClasspath.isEmpty())
+                config.getAnalysisFileConfig().setAdditionalClasspath(additionalClasspath);
+        }
+        {
+            String cgalgo = cmd.getOptionValue(OPTION_CALLGRAPH_ALGO);
+            if (cgalgo != null && !cgalgo.isEmpty()) {
+                try {
+                    config.setCallgraphAlgorithm(parseCallgraphAlgorithm(cgalgo));
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }    
+        }
+        {
+            String[] toSkip = cmd.getOptionValues(OPTION_SKIP_APK_FILE);
+            if (toSkip != null && toSkip.length > 0) {
+                for (String skipAPK : toSkip)
+                    filesToSkip.add(skipAPK);
+            }
         }
 
-        if(System.getenv().containsKey("ANDROID_HOME")) {
-            androidJar = System.getenv("ANDROID_HOME")+ File.separator + "platforms";
-        }
+        config.setCodeEliminationMode(InfoflowConfiguration.CodeEliminationMode.NoCodeElimination);
+        config.setEnableReflection(true);
+        config.setCallgraphAlgorithm(cgAlgorithm);
+        config.setMergeDexFiles(false);
+        config.setTaintAnalysisEnabled(false);
+        // Options.v().set_process_multiple_dex(true);
+    }
 
-        // Setup FlowDroid
-        final InfoflowAndroidConfiguration config = Utils.getFlowDroidConfig(apkPath, androidJar, cgAlgorithm);
-        SetupApplication app = new SetupApplication(config);
-
-        // Construct the call graph
-        app.constructCallgraph();
-        CallGraph callGraph = Scene.v().getCallGraph();
-
-        System.out.println(callGraph);
+    private static CallgraphAlgorithm parseCallgraphAlgorithm(String algo) throws Exception {
+       if (algo.equalsIgnoreCase("AUTO"))
+           return CallgraphAlgorithm.AutomaticSelection;
+       else if (algo.equalsIgnoreCase("CHA"))
+           return CallgraphAlgorithm.CHA;
+       else if (algo.equalsIgnoreCase("VTA"))
+           return CallgraphAlgorithm.VTA;
+       else if (algo.equalsIgnoreCase("RTA"))
+           return CallgraphAlgorithm.RTA;
+       else if (algo.equalsIgnoreCase("SPARK"))
+           return CallgraphAlgorithm.SPARK;
+       else if (algo.equalsIgnoreCase("GEOM"))
+           return CallgraphAlgorithm.GEOM;
+       else {
+           System.err.println(String.format("Invalid callgraph algorithm: %s", algo));
+           throw new Exception("Sth went wrong");
+       }
     }
 }

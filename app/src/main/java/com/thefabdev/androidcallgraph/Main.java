@@ -146,14 +146,16 @@ public class Main {
             // CallGraph callGraph = Scene.v().getCallGraph();
             // System.out.println(callGraph);
             // System.out.println();
-
+            
             System.out.println("Generate ICFG for our analysis...");
             System.out.println();
 
             InfoflowCFG icfg = new InfoflowCFG();
 
             int classIndex = 0;
-
+            // Print some general information of the generated callgraph. Note that although usually the nodes in callgraph
+            // are assumed to be methods, the edges in Soot's callgraph is from Unit to SootMethod.
+            // System.out.println(Utils.getPackageName(apkPath));
             AndroidCallGraphFilter androidCallGraphFilter = new AndroidCallGraphFilter(Utils.getPackageName(apkPath));
             for(SootClass sootClass: androidCallGraphFilter.getValidClasses()){
                 System.out.println(String.format("*****Class %d: %s*****", ++classIndex, sootClass.getName()));
